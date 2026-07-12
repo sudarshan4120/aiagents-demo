@@ -1,0 +1,7 @@
+{
+  "name": "discount-calculator",
+  "version": "1.0.0",
+  "description": "Discount calculator for regular, member, and VIP customers",
+  "main": "index.js",
+  "license": "MIT"
+}
