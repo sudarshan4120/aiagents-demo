@@ -6,7 +6,7 @@ function calculateDiscount(price, customerType, on_clearance) {
   let discountedPrice;
 
   if (on_clearance) {
-    discountedPrice = price * (1 - 0.15);
+    discountedPrice = price * (1 - 0.30);
   } else {
     const discountRates = {
       regular: 0,
