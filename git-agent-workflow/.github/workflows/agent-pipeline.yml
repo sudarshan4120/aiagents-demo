@@ -1,0 +1,106 @@
+name: Agent pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      ticket_key:
+        description: Linear issue identifier, e.g. ENG-123
+        required: true
+  repository_dispatch:
+    types: [linear-ticket-ready]
+
+env:
+  TICKET_KEY: ${{ github.event.inputs.ticket_key || github.event.client_payload.ticket_key }}
+
+jobs:
+  fetch-ticket:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - name: Fetch Linear ticket and start context.json
+        run: python scripts/fetch_linear_ticket.py
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: context
+          path: context.json
+
+  orchestrator:
+    needs: fetch-ticket
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests anthropic
+      - uses: actions/download-artifact@v4
+        with:
+          name: context
+      - run: python scripts/run_agent.py skills/orchestrator/SKILL.md plan
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: context
+          path: context.json
+          overwrite: true
+
+  code-and-qa:
+    needs: orchestrator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests anthropic
+      - uses: actions/download-artifact@v4
+        with:
+          name: context
+      - name: Coding and QA loop, max 3 rounds
+        run: |
+          for i in 1 2 3; do
+            python scripts/run_agent.py skills/coding-agent/SKILL.md code_changes
+            python scripts/run_agent.py skills/qa-agent/SKILL.md qa_report
+            status=$(python -c "import json; print(json.load(open('context.json'))['qa_report']['status'])")
+            if [ "$status" = "pass" ]; then
+              break
+            fi
+          done
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: context
+          path: context.json
+          overwrite: true
+
+  pr-review:
+    needs: code-and-qa
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests anthropic
+      - uses: actions/download-artifact@v4
+        with:
+          name: context
+      - run: python scripts/run_agent.py skills/pr-review-agent/SKILL.md pr_review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: context
+          path: context.json
+          overwrite: true
+
+  merge:
+    needs: pr-review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests anthropic
+      - uses: actions/download-artifact@v4
+        with:
+          name: context
+      - run: python scripts/run_agent.py skills/merge-agent/SKILL.md merge
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
